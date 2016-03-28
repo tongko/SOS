@@ -2,11 +2,8 @@
 
 #include <AccCtrl.h>
 #include <AclAPI.h>
-#include <string>
-#include <boost/smart_ptr.hpp>
-using namespace boost;
 
-#include "Constants.h"
+//using namespace boost;
 
 enum SyncObjectTypes
 {
@@ -61,7 +58,7 @@ class SharedMemoryLock
 {
 public:
 	template <typename T> explicit SharedMemoryLock(SharedMemory<T>& sharedMem)
-		: m_lock((sharedMem.Lock(), &sharedMem), boost::mem_fn(&SharedMemory<T>::Release))
+		: m_lock((sharedMem.Lock(), &sharedMem), mem_fn(&SharedMemory<T>::Release))
 	{
 	}
 
@@ -70,7 +67,7 @@ private:
 };
 
 template<typename T>
-inline SharedMemory<T>::SharedMemory()
+SharedMemory<T>::SharedMemory()
 	: m_name(L"")
 	, m_size(0)
 	, m_sharedMem()
@@ -82,7 +79,7 @@ inline SharedMemory<T>::SharedMemory()
 }
 
 template<typename T>
-inline SharedMemory<T>::SharedMemory(const std::wstring & name, DWORD size, SyncObjectTypes syncObjects, bool create)
+SharedMemory<T>::SharedMemory(const std::wstring & name, DWORD size, SyncObjectTypes syncObjects, bool create)
 	: m_name(name)
 	, m_size(size)
 	, m_sharedMem()
@@ -98,12 +95,12 @@ inline SharedMemory<T>::SharedMemory(const std::wstring & name, DWORD size, Sync
 }
 
 template<typename T>
-inline SharedMemory<T>::~SharedMemory()
+SharedMemory<T>::~SharedMemory()
 {
 }
 
 template<typename T>
-inline void SharedMemory<T>::Create(const std::wstring & name, DWORD size, SyncObjectTypes syncObjects, const std::wstring & userName)
+void SharedMemory<T>::Create(const std::wstring & name, DWORD size, SyncObjectTypes syncObjects, const std::wstring & userName)
 {
 	m_name = name;
 	m_size = size;
@@ -173,16 +170,16 @@ inline void SharedMemory<T>::Create(const std::wstring & name, DWORD size, SyncO
 }
 
 template<typename T>
-inline void SharedMemory<T>::Open(const std::wstring & name, SyncObjectTypes syncObjects)
+void SharedMemory<T>::Open(const std::wstring & name, SyncObjectTypes syncObjects)
 {
 	m_name = name;
 	m_sharedMem = shared_ptr<void>(OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, m_name.c_str()), CloseHandle);
 	if (!m_sharedMem || m_sharedMem.get() == INVALID_HANDLE_VALUE)
-		OutputDebugString(FormatError(GetLastError(), Constants::ErrOpenSharedMem, m_name));
+		OutputDebugString(FormatError(GetLastError(), Constants::ErrOpenSharedMem, m_name).c_str());
 
 	m_memView = shared_ptr<T>(static_cast<T*>(MapViewOfFile(m_sharedMem.get(), FILE_MAP_ALL_ACCESS, 0, 0, 0)), UnmapViewOfFile);
 	if (!m_memView)
-		OutputDebugString(FormatError(GetLastError(), Constants::ErrMapSharedMem, m_name));
+		OutputDebugString(FormatError(GetLastError(), Constants::ErrMapSharedMem, m_name).c_str());
 
 	if (syncObjects > SyncObjectTypes::SyncObjNone)
 		CreateSyncObjects(shared_ptr<SECURITY_ATTRIBUTES>(), syncObjects, name);
@@ -209,12 +206,12 @@ inline void SharedMemory<T>::SetReqEvent()
 {
 	if (!m_sharedReqEvent)
 	{
-		OutputDebugString((Constants::ErrReqEventNull % m_name).str());
+		OutputDebugString((Constants::ErrReqEventNull % m_name).str().c_str());
 		return;
 	}
 
 	if (!SetEvent(m_sharedReqEvent.get()))
-		OutputDebugString(FormatError(GetLastError(), Constants::ReqSetEventFailed, m_name));
+		OutputDebugString(FormatError(GetLastError(), Constants::ReqSetEventFailed, m_name).c_str());
 }
 
 template<typename T>
@@ -222,12 +219,12 @@ inline void SharedMemory<T>::SetRespEvent()
 {
 	if (!m_sharedRespEvent)
 	{
-		OutputDebugString((Constants::ErrRespEventNull % m_name).str());
+		OutputDebugString((Constants::ErrRespEventNull % m_name).str().c_str());
 		return;
 	}
 
 	if (!SetEvent(m_sharedRespEvent.get()))
-		OutputDebugString(FormatError(GetLastError(), Constants::RespSetEventFailed, m_name));
+		OutputDebugString(FormatError(GetLastError(), Constants::RespSetEventFailed, m_name).c_str());
 }
 
 template<typename T>
@@ -279,15 +276,15 @@ inline void SharedMemory<T>::CreateSyncObjects(const shared_ptr<SECURITY_ATTRIBU
 	if (syncObjects >= SyncObjectTypes::SyncObjRequest)
 	{
 		m_sharedMutex = shared_ptr<void>(CreateMutex(sa.get(), FALSE, (name + std::wstring(L"_mutex")).c_str()), CloseHandle);
-		OutputDebugString((Constants::InfoMutex % name % (DWORD)m_sharedMutex.get()).str());
+		OutputDebugString((Constants::InfoMutex % name % (DWORD)m_sharedMutex.get()).str().c_str());
 
 		m_sharedReqEvent = shared_ptr<void>(CreateEvent(sa.get(), FALSE, FALSE, (name + std::wstring(L"_req_event")).c_str()), CloseHandle);
-		OutputDebugString((Constants::InfoReqEvent % name % (DWORD)m_sharedReqEvent.get()).str());
+		OutputDebugString((Constants::InfoReqEvent % name % (DWORD)m_sharedReqEvent.get()).str().c_str());
 	}
 
 	if (syncObjects >= SyncObjectTypes::SyncObjBoth)
 	{
 		m_sharedRespEvent = shared_ptr<void>(CreateEvent(sa.get(), FALSE, FALSE, (name + std::wstring(L"_resp_event")).c_str()), CloseHandle);
-		OutputDebugString((Constants::InfoRespEvent % name % (DWORD)m_sharedRespEvent.get()).str());
+		OutputDebugString((Constants::InfoRespEvent % name % (DWORD)m_sharedRespEvent.get()).str().c_str());
 	}
 }

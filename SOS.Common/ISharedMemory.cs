@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace SOS.Common
 {
-	public interface ISharedMemory<T> : IDisposable where T : struct
+	public interface ISharedMemory<T> : IDisposable
 	{
 		void Create(string name, SyncObjectTypes syncObjects);
 		void Open(string name, SyncObjectTypes syncObjects);

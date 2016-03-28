@@ -38,3 +38,18 @@ void Trace(const wchar_t* pszFormat, ...)
 
 #endif // _DEBUG
 
+std::wstring FormatError(DWORD errorId, wformat format, std::wstring name)
+{
+	if (errorId == 0)
+		return std::wstring();
+
+	LPTSTR msgBuffer = nullptr;
+	size_t size = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&msgBuffer, 0, NULL);
+
+	std::wstring message(msgBuffer, size);
+
+	LocalFree(msgBuffer);
+
+	return (format % name % (wformat(L"ID: %1%, Message: %2%") % errorId % message).str()).str();
+}

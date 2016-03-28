@@ -19,7 +19,7 @@ private:
 	void SetResetKeyInput(scoped_array<INPUT>& inputs, WORD vKey, short& count);
 	void SendMouseEvent(HANDLE stdIn);
 	void ScrollShell(HANDLE stdOut, int xDelta, int yDelta);
-	void SetShellConfig(DWORD hookThreadId, HANDLE stdOut);
+	void SetShellParams(DWORD hookThreadId, HANDLE stdOut);
 
 private:
 	static DWORD WINAPI StaticMonitorThread(LPVOID lpParam);

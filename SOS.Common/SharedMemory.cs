@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace SOS.Common
 {
-	public sealed class SharedMemory<T> : ISharedMemory<T> where T : struct
+	public sealed class SharedMemory<T> : ISharedMemory<T> where T : 
 	{
 		#region Fields
 
@@ -50,7 +50,7 @@ namespace SOS.Common
 			_hSharedMem = MemoryMappedFile.CreateNew(name, Marshal.SizeOf(typeof(T)));
 			_pSharedMem = _hSharedMem.CreateViewAccessor(0, 0, MemoryMappedFileAccess.ReadWrite);
 			var empty = default(T);
-			_pSharedMem.Write<T>(0, ref empty);
+			_pSharedMem.Write(0, ref empty);
 
 			if (syncObjects > SyncObjectTypes.SyncObjNone)
 				CreateSyncObjects(syncObjects, name);

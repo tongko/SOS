@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#include "Constants.h"
 #include "SharedMemory.h"
 #include "HookHandler.h"
 
@@ -224,8 +225,8 @@ void HookHandler::ResizeShellWindow(HANDLE stdOut, DWORD & columns, DWORD & rows
 	{
 		if (m_shellParams->BufferColumns != 0 && window.Left + (SHORT)columns > (SHORT)m_shellParams->BufferColumns)
 		{
-			shellRect.Left = (SHORT)m_shellParams->BufferColumns - columns;
-			shellRect.Right = (SHORT)m_shellParams->BufferColumns - 1;
+			shellRect.Left = (SHORT)(m_shellParams->BufferColumns - columns);
+			shellRect.Right = (SHORT)(m_shellParams->BufferColumns - 1);
 		}
 		else
 		{
@@ -393,30 +394,237 @@ void HookHandler::CopyShellText()
 
 void HookHandler::SendShellText(HANDLE stdIn, const shared_ptr<wchar_t>& buffer)
 {
+	wchar_t* text = buffer.get();
+	size_t textLen = wcslen(text);
+	size_t partLen = 512;
+	size_t parts = textLen / partLen;
+
+	for (size_t part = 0; part < parts + 1; ++part)
+	{
+		size_t keyEventCount = 0;
+		if (part == parts)
+			partLen = textLen - parts * partLen;
+
+		scoped_array<INPUT_RECORD> keyEvents(new INPUT_RECORD[partLen]);
+		ZeroMemory(keyEvents.get(), sizeof(INPUT_RECORD) * partLen);
+
+		size_t offset = 0;
+		for (size_t i = 0; i < partLen && offset < textLen; ++i, ++offset, ++keyEventCount)
+		{
+			if (text[offset] == L'\r' || text[offset] == L'\n')
+			{
+				if (text[offset] == L'\r' && text[offset + 1] == L'\n')
+					++offset;
+
+				if (keyEventCount > 0)
+				{
+					DWORD textWritten = 0;
+					WriteConsoleInput(stdIn, keyEvents.get(), (DWORD)keyEventCount, &textWritten);
+				}
+
+				PostMessage(m_shellParams->ShellWindow, WM_KEYDOWN, VK_RETURN, 0x001C0001);
+				PostMessage(m_shellParams->ShellWindow, WM_KEYUP, VK_RETURN, 0xC01C0001);
+
+				keyEventCount = -1;
+				partLen -= i;
+				i = -1;
+			}
+			else
+			{
+				keyEvents[i].EventType = KEY_EVENT;
+				keyEvents[i].Event.KeyEvent.bKeyDown = TRUE;
+				keyEvents[i].Event.KeyEvent.wRepeatCount = 1;
+				keyEvents[i].Event.KeyEvent.wVirtualKeyCode = LOBYTE(VkKeyScan(text[offset]));
+				keyEvents[i].Event.KeyEvent.wVirtualScanCode = 0;
+				keyEvents[i].Event.KeyEvent.uChar.UnicodeChar = text[offset];
+				keyEvents[i].Event.KeyEvent.dwControlKeyState = 0;
+			}
+		}
+
+		if (keyEventCount > 0)
+		{
+			DWORD textWritten = 0;
+			WriteConsoleInput(stdIn, keyEvents.get(), (DWORD)keyEventCount, &textWritten);
+		}
+	}
 }
 
 void HookHandler::SetResetKeyInput(scoped_array<INPUT>& inputs, WORD vKey, short & count)
 {
+	if ((GetAsyncKeyState(vKey) & 0x8000) == 0)
+		return;
+
+	inputs[count].type = INPUT_KEYBOARD;
+	inputs[count].ki.wVk = vKey;
+	inputs[count].ki.dwFlags = KEYEVENTF_KEYUP;
+	++count;
 }
 
 void HookHandler::SendMouseEvent(HANDLE stdIn)
 {
+	INPUT_RECORD mouseEvent;
+	ZeroMemory(&mouseEvent, sizeof(INPUT_RECORD));
+
+	mouseEvent.EventType = MOUSE_EVENT;
+
+	CopyMemory(&mouseEvent.Event.MouseEvent, m_shellMouseEvent.Get(), sizeof(MOUSE_EVENT_RECORD));
+
+	DWORD events = 0;
+	WriteConsoleInput(stdIn, &mouseEvent, 1, &events);
 }
 
 void HookHandler::ScrollShell(HANDLE stdOut, int xDelta, int yDelta)
 {
+	CONSOLE_SCREEN_BUFFER_INFO info;
+	GetConsoleScreenBufferInfo(stdOut, &info);
+
+	int currentXPos = info.srWindow.Right - m_shellParams->Columns + 1;
+	int currentYPos = info.srWindow.Bottom - m_shellParams->Rows + 1;
+
+	xDelta = max(-currentXPos, min(xDelta, (int)(m_shellParams->BufferColumns - m_shellParams->Columns) - currentXPos));
+	yDelta = max(-currentYPos, min(yDelta, (int)(m_shellParams->BufferRows - m_shellParams->Rows) - currentYPos));
+
+	SMALL_RECT rect;
+	rect.Top = (SHORT)yDelta;
+	rect.Bottom = (SHORT)yDelta;
+	rect.Left = (SHORT)xDelta;
+	rect.Right = (SHORT)xDelta;
+
+	SetConsoleWindowInfo(stdOut, FALSE, &rect);
 }
 
-void HookHandler::SetShellConfig(DWORD hookThreadId, HANDLE stdOut)
+void HookHandler::SetShellParams(DWORD hookThreadId, HANDLE stdOut)
 {
+	COORD maxSize = GetLargestConsoleWindowSize(stdOut);
+
+	m_shellParams->MaxRows = maxSize.Y;
+	m_shellParams->MaxColumns = maxSize.X;
+
+	if (m_shellParams->Rows > (DWORD)maxSize.Y)
+		m_shellParams->Rows = maxSize.Y;
+	if (m_shellParams->Columns > (DWORD)maxSize.X)
+		m_shellParams->Columns = maxSize.X;
+
+	if (m_shellParams->BufferRows != 0 && m_shellParams->MaxRows > m_shellParams->BufferRows)
+		m_shellParams->MaxRows = m_shellParams->BufferRows;
+	if (m_shellParams->BufferColumns != 0 && m_shellParams->MaxColumns > m_shellParams->BufferColumns)
+		m_shellParams->MaxColumns = m_shellParams->BufferColumns;
+
+	m_shellParams->ShellWindow = GetConsoleWindow();
+	m_shellParams->HookThreadId = hookThreadId;
+
+	TRACE(L"Max columns: %i, max rows: %i\n", m_shellParams->MaxColumns, m_shellParams->MaxRows);
+
+	GetConsoleScreenBufferInfo(stdOut, &m_shellInfo->ScreenBufferInfo);
+	GetConsoleCursorInfo(stdOut, m_cursorInfo.Get());
+
+	m_shellParams.SetReqEvent();
 }
 
 DWORD HookHandler::StaticMonitorThread(LPVOID lpParam)
 {
-	return 0;
+	HookHandler* hookHandler = reinterpret_cast<HookHandler*>(lpParam);
+	return hookHandler->MonitorThread();
 }
 
 DWORD HookHandler::MonitorThread()
 {
+	TRACE(L"Hook start.\n");
+
+	if (!OpenSharedObjects())
+		return 0;
+
+	HANDLE stdOut = CreateFile(L"CONOUT$", GENERIC_WRITE | GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		OPEN_EXISTING, 0, 0);
+	SetShellParams(GetCurrentThreadId(), stdOut);
+	if (WaitForSingleObject(m_shellParams.GetRespEvent(), 10000) == WAIT_TIMEOUT)
+		return 0;
+
+	shared_ptr<void> parentProcWatchdog(OpenMutex(SYNCHRONIZE, FALSE, (LPCTSTR)(Constants::WatchdogName % m_shellParams->ParentProcessId).str().c_str()), CloseHandle);
+	TRACE(L"Watchdog handle: 0x%08X\n", parentProcWatchdog.get());
+
+	HANDLE waitHandles[] =
+	{
+		m_monitorThreadExit.get(),
+		m_shellCopyInfo.GetReqEvent(),
+		m_shellTextInfo.GetReqEvent(),
+		m_newScrollPos.GetReqEvent(),
+		m_shellMouseEvent.GetReqEvent(),
+		m_newShellSize.GetReqEvent(),
+		stdOut,
+	};
+
+	DWORD waitRes = 0;
+	HANDLE stdIn = CreateFile(L"CONIN$", GENERIC_WRITE | GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+		OPEN_EXISTING, 0, 0);
+	while ((waitRes = WaitForMultipleObjects(sizeof(waitHandles) / sizeof(waitHandles[0]), 
+												waitHandles, FALSE, m_shellParams->RefreshInterval))
+		!= WAIT_OBJECT_0)
+	{
+		if (parentProcWatchdog.get() != NULL && WaitForSingleObject(parentProcWatchdog.get(), 0) == WAIT_ABANDONED)
+		{
+			TRACE(L"Watchdog 0x%08X is dead. Time ot exit.\n", parentProcWatchdog.get());
+			SendMessage(m_shellParams->ShellWindow, WM_CLOSE, 0, 0);
+			break;
+		}
+
+		switch (waitRes)
+		{
+		case WAIT_OBJECT_0 + 1:
+		{
+			SharedMemoryLock memLock(m_shellCopyInfo);
+
+			CopyShellText();
+
+			m_shellCopyInfo.SetRespEvent();
+			break;
+		}
+		case WAIT_OBJECT_0 + 2:
+		{
+			SharedMemoryLock memLock(m_shellTextInfo);
+
+			shared_ptr<wchar_t> buffer;
+			if (m_shellTextInfo->Mem != NULL)
+				buffer.reset(reinterpret_cast<wchar_t*>(m_shellTextInfo->Mem),
+					bind<BOOL>(VirtualFreeEx, GetCurrentProcess(), _1, NULL, MEM_RELEASE));
+
+			SendShellText(stdIn, buffer);
+			m_shellTextInfo.SetRespEvent();
+			break;
+		}
+		case WAIT_OBJECT_0 + 3:
+		{
+			SharedMemoryLock memLock(m_newScrollPos);
+
+			ScrollShell(stdOut, m_newScrollPos->cx, m_newScrollPos->cy);
+			ReadShellBuffer();
+			break;
+		}
+		case WAIT_OBJECT_0 + 4:
+		{
+			SharedMemoryLock memLock(m_shellMouseEvent);
+
+			SendMouseEvent(stdIn);
+			m_shellMouseEvent.SetRespEvent();
+			break;
+		}
+		case WAIT_OBJECT_0 + 5:
+		{
+			SharedMemoryLock memLock(m_newShellSize);
+			
+			ResizeShellWindow(stdOut, m_newShellSize->Columns, m_newShellSize->Rows, m_newShellSize->ResizeWindowEdge);
+			ReadShellBuffer();
+			break;
+		}
+		case WAIT_OBJECT_0 + 6:
+			Sleep(m_shellParams->NotificationTimeout);
+		default:
+		{
+			ReadShellBuffer();
+			break; 
+		}
+		}
+	}
+
 	return 0;
 }
